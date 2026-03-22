@@ -1,23 +1,12 @@
 """
-robot_vision_phase2.py
+PHASE_2.py
 ----------------------
-Phase 2: Proportional Differential Drive + Performance Metrics.
-
 State machine behaviour:
   SEARCHING  - one or both markers not visible, hold last cmd or STOP
   HOLDING    - detection dropped, holding last valid command for HOLD_DURATION
   ATTACKING  - both markers visible, proportional MOTOR curve toward opponent
   RAMMING    - distance <= RAM_THRESHOLD → FORWARD (contact)
-
-Key difference from Phase 1:
-  No hard LEFT/RIGHT spin. steer_to_motor_command() maps steering error
-  continuously to differential wheel speeds so the robot curves and drives
-  simultaneously rather than stopping to spin.
-
-Detection:
-  Uses the same tuned DetectorParameters and 0.5x downscaled detection
-  as Phase 1 and Phase 3 so detection quality is not a confound.
-
+  
 Metrics logged per run:
   - Time to align            (s)   time until |steering_error| < threshold
   - Time to contact          (s)   time until RAM distance reached
@@ -29,10 +18,7 @@ Metrics logged per run:
                                    identical method to Phase 1)
   - Detection reliability    (%)   frames with both markers / total frames
 
-CSV files saved to ./logs/ next to this script.
-
 Usage:
-    python robot_vision_phase2.py
     Q = quit | S = stop | T = test | A = autonomous | R = record
 """
 
@@ -46,15 +32,15 @@ import csv
 import os
 from datetime import datetime
 
-# -- Log directory: always next to this script, never relative to cwd ---------
+# Log directory
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
-# -- ESP32 --------------------------------------------------------------------
+# ESP32-
 ESP32_IP   = "192.168.4.1"
 ESP32_PORT = 8888
 TIMEOUT    = 5
 
-# -- ArUco --------------------------------------------------------------------
+# ArUco
 ARUCO_TYPE = "DICT_4X4_1000"
 ARUCO_DICT_MAP = {
     "DICT_4X4_50":         cv2.aruco.DICT_4X4_50,
@@ -88,14 +74,14 @@ MARKER_LENGTH = 0.055
 ROBOT_ID    = 0
 OPPONENT_ID = 1
 
-# -- Thresholds ---------------------------------------------------------------
+# Thresholds
 ALIGN_THRESHOLD_DEG = 20.0
 ATTACK_THRESHOLD_PX = 300   # used for HUD ring only
 RAM_THRESHOLD_PX    = 180
 CMD_INTERVAL        = 0.15
 HOLD_DURATION       = 0.3
 
-# -- Motor PWM ----------------------------------------------------------------
+# Motor PWM
 PWM_STOP      = 1500
 PWM_FWD       = 1650
 PWM_REV       = 1350
@@ -103,14 +89,12 @@ PWM_MIN       = 1100
 PWM_MAX       = 1900
 MAX_STEER_DEG = 90.0
 
-# -- Detection scaling: identical to Phase 1 and Phase 3 ---------------------
+# Detection scaling
 DETECT_SCALE = 0.5
-
 
 # =============================================================================
 #  States
 # =============================================================================
-
 class State:
     SEARCHING = "SEARCHING"
     HOLDING   = "HOLDING"
@@ -124,20 +108,10 @@ STATE_COLOURS = {
     State.RAMMING:   (0, 0, 255),
 }
 
-
 # =============================================================================
 #  Performance Logger
 # =============================================================================
-
 class PerformanceLogger:
-    """
-    Records per-frame data and computes metrics at end of run.
-
-    Command oscillations intentionally excluded so CSV columns are
-    identical to Phase 1 and Phase 3 for direct cross-phase comparison.
-
-    Path efficiency uses true 2D pixel coordinates (same method as Phase 1).
-    """
 
     def __init__(self, log_dir=LOG_DIR):
         self.log_dir = log_dir
@@ -162,13 +136,6 @@ class PerformanceLogger:
 
     def record_frame(self, steering_error, distance, command,
                      both_detected, robot_center=None):
-        """
-        Call every camera frame while running is True.
-
-        robot_center : (int, int) or None
-            Pixel centre of robot marker. Used for true 2D path efficiency,
-            identical to Phase 1 method so results are directly comparable.
-        """
         if not self.running:
             return
 
@@ -202,7 +169,7 @@ class PerformanceLogger:
                   f"dist={distance:.0f}px  error={steering_error:+.1f}deg")
 
     def end_run(self, label="run"):
-        """Finalise metrics, print summary, save CSVs."""
+        # Finalise metrics, print summary, save CSVs
         if not self.running or not self.frames:
             print("[LOG] No data to save.")
             return {}
@@ -291,11 +258,9 @@ class PerformanceLogger:
 
         return metrics
 
-
 # =============================================================================
 #  Command Worker
 # =============================================================================
-
 class CommandWorker(threading.Thread):
 
     def __init__(self):
@@ -357,16 +322,10 @@ class CommandWorker(threading.Thread):
             self.sock.close()
             print("[NET] Socket closed.")
 
-
 # =============================================================================
-#  ArUco -- tuned detector + downscaled detection (identical to Phase 1 & 3)
+#  ArUco
 # =============================================================================
-
 def make_detector():
-    """
-    Build an ArucoDetector with parameters tuned for reliable detection.
-    Identical to Phase 1 and Phase 3 so detection quality is not a confound.
-    """
     d = cv2.aruco.getPredefinedDictionary(ARUCO_DICT_MAP[ARUCO_TYPE])
     p = cv2.aruco.DetectorParameters()
     p.adaptiveThreshWinSizeMin    = 3
@@ -379,12 +338,7 @@ def make_detector():
     p.cornerRefinementMethod      = cv2.aruco.CORNER_REFINE_SUBPIX
     return cv2.aruco.ArucoDetector(d, p)
 
-
 def pose_estimation(frame, detector):
-    """
-    Detect on downscaled frame, scale corners back up for pose estimation.
-    Identical pipeline to Phase 1 and Phase 3.
-    """
     h, w = frame.shape[:2]
     small      = cv2.resize(frame, (int(w * DETECT_SCALE), int(h * DETECT_SCALE)))
     gray_small = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
@@ -411,14 +365,11 @@ def pose_estimation(frame, detector):
             'tvec':   tvec[0][0].tolist(),
             'rvec':   rvec[0][0].tolist(),
         }
-
     return frame, detections
-
 
 # =============================================================================
 #  Geometry
 # =============================================================================
-
 def get_robot_heading(rvec):
     R, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
     return np.arctan2(R[1][0], R[0][0])
@@ -436,11 +387,9 @@ def get_pixel_distance(robot_center, opponent_center):
     dy = opponent_center[1] - robot_center[1]
     return np.sqrt(dx**2 + dy**2)
 
-
 # =============================================================================
-#  Proportional Steering -- Phase 2 core behaviour
+#  Proportional Steering: Phase 2
 # =============================================================================
-
 def steer_to_motor_command(steering_error_deg, base_speed_us=None):
     """
     Convert signed steering error to MOTOR <left_us> <right_us>.
@@ -468,11 +417,9 @@ def steer_to_motor_command(steering_error_deg, base_speed_us=None):
     right_us = int(np.clip(right_us, PWM_MIN, PWM_MAX))
     return f"MOTOR {left_us} {right_us}"
 
-
 # =============================================================================
 #  State Machine
 # =============================================================================
-
 def decide_state_and_command(detections, last_valid_cmd, last_detection_time):
     """
     Phase 2 state machine.
@@ -511,11 +458,9 @@ def decide_state_and_command(detections, last_valid_cmd, last_detection_time):
         else:
             return State.SEARCHING, "STOP", info, None, last_detection_time
 
-
 # =============================================================================
 #  HUD
 # =============================================================================
-
 def draw_hud(frame, detections, state, command, info, worker, autonomous, logger):
     h, w = frame.shape[:2]
 
@@ -524,7 +469,7 @@ def draw_hud(frame, detections, state, command, info, worker, autonomous, logger
     cv2.putText(frame, "ESP32: OK" if worker.connected else "ESP32: DISCONNECTED",
                 (w - 220, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, conn_col, 2)
 
-    # Phase label -- always visible so recordings are unambiguous
+    # Phase label
     cv2.putText(frame, "PHASE 2 -- Proportional Drive",
                 (w // 2 - 190, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
 
@@ -563,7 +508,7 @@ def draw_hud(frame, detections, state, command, info, worker, autonomous, logger
         cv2.putText(frame, "R = start recording", (10, 155),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (150, 150, 150), 1)
 
-    # Robot marker + heading arrow + threshold rings
+    # Robot marker, heading arrow, threshold rings
     if ROBOT_ID in detections:
         rc = detections[ROBOT_ID]['center']
         cv2.circle(frame, rc, 10, (0, 255, 0), -1)
@@ -584,7 +529,7 @@ def draw_hud(frame, detections, state, command, info, worker, autonomous, logger
         cv2.putText(frame, "OPPT", (oc[0] + 12, oc[1]),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-    # Vector line robot -> opponent
+    # Vector line robot to opponent
     if ROBOT_ID in detections and OPPONENT_ID in detections:
         rc       = detections[ROBOT_ID]['center']
         oc       = detections[OPPONENT_ID]['center']
@@ -598,11 +543,9 @@ def draw_hud(frame, detections, state, command, info, worker, autonomous, logger
 
     return frame
 
-
 # =============================================================================
 #  Main
 # =============================================================================
-
 def main():
     detector = make_detector()
 
