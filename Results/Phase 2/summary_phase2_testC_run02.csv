@@ -1,0 +1,2 @@
+label,total_time_s,time_to_align_s,time_to_contact_s,heading_at_contact_deg,mean_abs_steering_error_deg,max_abs_steering_error_deg,path_efficiency_pct,detection_reliability_pct,total_frames
+phase2_run08,2.458,0.848,2.458,10.6,65.7,178.3,86.8,47.1,68
