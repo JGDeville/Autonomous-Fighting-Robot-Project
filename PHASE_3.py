@@ -1,8 +1,6 @@
 """
-robot_vision_phase3.py
+PHASE_3.py
 ----------------------
-Phase 3: PID Steering Controller + Performance Metrics.
-
 State machine behaviour:
   SEARCHING  - one or both markers not visible, hold last cmd or STOP
   HOLDING    - detection dropped, holding last valid command for HOLD_DURATION
@@ -14,17 +12,6 @@ Key difference from Phase 2:
   The integral term corrects persistent offset; the derivative term damps
   overshoot. The robot converges more smoothly on the opponent heading.
 
-PID tuning procedure (do in order):
-  Step 1 - Set KI=0, KD=0. Raise KP until robot aligns but oscillates,
-           then back off until oscillation just stops. Start: KP=0.8
-  Step 2 - Raise KD slowly until overshoot is eliminated. Start: KD=0.05
-  Step 3 - Only add KI if robot consistently stops a few degrees short.
-           Keep very small - too much causes windup. Start: KI=0.01
-
-Detection:
-  Uses the same tuned DetectorParameters and 0.5x downscaled detection
-  as Phase 1 and Phase 2 so detection quality is not a confound.
-
 Metrics logged per run:
   - Time to align            (s)   time until |steering_error| < threshold
   - Time to contact          (s)   time until RAM distance reached
@@ -35,14 +22,9 @@ Metrics logged per run:
                                    (true 2D pixel coords - identical to Phase 1/2)
   - Detection reliability    (%)   frames with both markers / total frames
 
-  PID gains (KP, KI, KD) are recorded in the CSV filename and as constant
-  columns in the frame CSV for tuning analysis. They are NOT in the summary
-  CSV so its schema matches Phase 1 and Phase 2 for direct comparison.
-
 CSV files saved to ./logs/ next to this script.
 
 Usage:
-    python robot_vision_phase3.py
     Q = quit | S = stop | T = test | A = autonomous | R = record
 """
 
@@ -56,15 +38,15 @@ import csv
 import os
 from datetime import datetime
 
-# -- Log directory: always next to this script, never relative to cwd ---------
+# Log directory
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
-# -- ESP32 --------------------------------------------------------------------
+# ESP32
 ESP32_IP   = "192.168.4.1"
 ESP32_PORT = 8888
 TIMEOUT    = 5
 
-# -- ArUco --------------------------------------------------------------------
+# ArUco
 ARUCO_TYPE = "DICT_4X4_1000"
 ARUCO_DICT_MAP = {
     "DICT_4X4_50":         cv2.aruco.DICT_4X4_50,
@@ -95,41 +77,38 @@ INTRINSIC_CAMERA = np.array(
 DISTORTION    = np.array((0.079, -0.27, 0, 0, 0), dtype=np.float64)
 MARKER_LENGTH = 0.05
 
-# -- Marker IDs: must match Phase 1 and Phase 2 -------------------------------
+# Marker IDs
 ROBOT_ID    = 0
 OPPONENT_ID = 1
 
-# -- Thresholds ---------------------------------------------------------------
+# Thresholds
 ALIGN_THRESHOLD_DEG = 20.0
 ATTACK_THRESHOLD_PX = 300   # used for HUD ring only
 RAM_THRESHOLD_PX    = 180
 CMD_INTERVAL        = 0.15
 HOLD_DURATION       = 0.3
 
-# -- Motor PWM ----------------------------------------------------------------
+# Motor PWM
 PWM_STOP = 1500
 PWM_FWD  = 1650
 PWM_REV  = 1350
 PWM_MIN  = 1100
 PWM_MAX  = 1900
 
-# -- PID Gains ----------------------------------------------------------------
-# Tune these constants. See docstring for procedure.
-KP = 0.66    # proportional gain  -- main steering strength
-KI = 0.0   # integral gain      -- corrects persistent offset
-KD = 0.0278   # derivative gain    -- dampens overshoot
+# PID
+KP = 0.66    # proportional gain
+KI = 0.0     # integral gain
+KD = 0.0278  # derivative gain
 
-# Maximum PID output (maps to full wheel differential at this error magnitude)
+# Maximum PID output
 PID_MAX_OUTPUT = 90.0
 
-# -- Detection scaling: identical to Phase 1 and Phase 2 ---------------------
+# Detection scaling
 DETECT_SCALE = 0.5
-
 
 # =============================================================================
 #  States
 # =============================================================================
-
 class State:
     SEARCHING = "SEARCHING"
     HOLDING   = "HOLDING"
@@ -143,11 +122,9 @@ STATE_COLOURS = {
     State.RAMMING:   (0, 0, 255),
 }
 
-
 # =============================================================================
 #  PID Controller
 # =============================================================================
-
 class PIDController:
     """
     PID controller for steering error.
@@ -223,24 +200,7 @@ class PIDController:
 # =============================================================================
 #  Performance Logger
 # =============================================================================
-
 class PerformanceLogger:
-    """
-    Records per-frame data and computes metrics at end of run.
-
-    Summary CSV schema is IDENTICAL to Phase 1 and Phase 2:
-      label, total_time_s, time_to_align_s, time_to_contact_s,
-      heading_at_contact_deg, mean_abs_steering_error_deg,
-      max_abs_steering_error_deg, path_efficiency_pct,
-      detection_reliability_pct, total_frames
-
-    command_oscillations excluded to match Phase 1 and Phase 2.
-    kp/ki/kd NOT in summary CSV (would break cross-phase comparison) --
-    they are recorded in the filename and in the frame CSV instead.
-
-    Path efficiency uses true 2D pixel coordinates, identical to Phase 1/2.
-    """
-
     def __init__(self, log_dir=LOG_DIR):
         self.log_dir = log_dir
         os.makedirs(self.log_dir, exist_ok=True)
@@ -265,17 +225,7 @@ class PerformanceLogger:
     def record_frame(self, steering_error, distance, command,
                      both_detected, robot_center=None,
                      pid_p=None, pid_i=None, pid_d=None):
-        """
-        Call every camera frame while running is True.
-
-        robot_center : (int, int) or None
-            Pixel centre of robot marker. Used for true 2D path efficiency,
-            identical to Phase 1 and Phase 2 so values are comparable.
-
-        pid_p/i/d : float or None
-            Individual PID terms logged to frame CSV for tuning analysis.
-            Not included in summary CSV.
-        """
+                       
         if not self.running:
             return
 
@@ -336,7 +286,7 @@ class PerformanceLogger:
         mean_err = round(float(np.mean(errors)), 1) if errors else None
         max_err  = round(float(np.max(errors)),  1) if errors else None
 
-        # True 2D path efficiency -- identical calculation to Phase 1 and Phase 2
+        # True 2D path efficiency
         coords = [(f['robot_x'], f['robot_y']) for f in self.frames
                   if f['robot_x'] is not None and f['robot_y'] is not None]
 
@@ -354,7 +304,7 @@ class PerformanceLogger:
             if actual_path > 0:
                 path_efficiency_pct = round(100.0 * straight_line / actual_path, 1)
 
-        # Summary metrics -- schema MUST match Phase 1 and Phase 2 exactly
+        # Summary metrics
         metrics = {
             'label':                       label,
             'total_time_s':                round(total_time, 3),
@@ -413,11 +363,9 @@ class PerformanceLogger:
 
         return metrics
 
-
 # =============================================================================
 #  Command Worker
 # =============================================================================
-
 class CommandWorker(threading.Thread):
 
     def __init__(self):
@@ -479,16 +427,10 @@ class CommandWorker(threading.Thread):
             self.sock.close()
             print("[NET] Socket closed.")
 
-
 # =============================================================================
-#  ArUco -- tuned detector + downscaled detection (identical to Phase 1 & 2)
+#  ArUco 
 # =============================================================================
-
 def make_detector():
-    """
-    Build an ArucoDetector with parameters tuned for reliable detection.
-    Identical to Phase 1 and Phase 2 so detection quality is not a confound.
-    """
     d = cv2.aruco.getPredefinedDictionary(ARUCO_DICT_MAP[ARUCO_TYPE])
     p = cv2.aruco.DetectorParameters()
     p.adaptiveThreshWinSizeMin    = 3
@@ -501,12 +443,7 @@ def make_detector():
     p.cornerRefinementMethod      = cv2.aruco.CORNER_REFINE_SUBPIX
     return cv2.aruco.ArucoDetector(d, p)
 
-
 def pose_estimation(frame, detector):
-    """
-    Detect on downscaled frame, scale corners back up for pose estimation.
-    Identical pipeline to Phase 1 and Phase 2.
-    """
     h, w = frame.shape[:2]
     small      = cv2.resize(frame, (int(w * DETECT_SCALE), int(h * DETECT_SCALE)))
     gray_small = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
@@ -536,11 +473,9 @@ def pose_estimation(frame, detector):
 
     return frame, detections
 
-
 # =============================================================================
 #  Geometry
 # =============================================================================
-
 def get_robot_heading(rvec):
     R, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
     return np.arctan2(R[1][0], R[0][0])
@@ -558,11 +493,9 @@ def get_pixel_distance(robot_center, opponent_center):
     dy = opponent_center[1] - robot_center[1]
     return np.sqrt(dx**2 + dy**2)
 
-
 # =============================================================================
 #  PID-based motor command
 # =============================================================================
-
 def pid_to_motor_command(pid_output, base_speed_us=None):
     """
     Convert PID output [-PID_MAX_OUTPUT, +PID_MAX_OUTPUT] to MOTOR command.
@@ -591,17 +524,13 @@ def pid_to_motor_command(pid_output, base_speed_us=None):
     right_us = int(np.clip(right_us, PWM_MIN, PWM_MAX))
     return f"MOTOR {left_us} {right_us}"
 
-
 # =============================================================================
 #  State Machine
 # =============================================================================
-
 def decide_state_and_command(detections, pid, last_valid_cmd, last_detection_time):
     """
     Phase 3 state machine with PID steering and dropout hold.
-
     Returns (state, command, info, pid_terms, last_valid_cmd, last_detection_time)
-    pid_terms dict contains p/i/d values for logging.
     """
     info      = {'steering_error': None, 'distance': None}
     pid_terms = {'p': None, 'i': None, 'd': None}
@@ -636,11 +565,9 @@ def decide_state_and_command(detections, pid, last_valid_cmd, last_detection_tim
             pid.reset()
             return State.SEARCHING, "STOP", info, pid_terms, None, last_detection_time
 
-
 # =============================================================================
 #  HUD
 # =============================================================================
-
 def draw_hud(frame, detections, state, command, info, pid_terms,
              worker, autonomous, logger):
     h, w = frame.shape[:2]
@@ -650,7 +577,7 @@ def draw_hud(frame, detections, state, command, info, pid_terms,
     cv2.putText(frame, "ESP32: OK" if worker.connected else "ESP32: DISCONNECTED",
                 (w - 220, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, conn_col, 2)
 
-    # Phase label -- always visible so recordings are unambiguous
+    # Phase label
     cv2.putText(frame, "PHASE 3 -- PID Steering",
                 (w // 2 - 160, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
 
@@ -678,7 +605,7 @@ def draw_hud(frame, detections, state, command, info, pid_terms,
         cv2.putText(frame, f"DIST:    {dist:.0f} px", (10, 125),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, dist_col, 2)
 
-    # PID terms -- live display for tuning
+    # PID terms 
     if pid_terms['p'] is not None:
         cv2.putText(frame,
                     f"PID  P:{pid_terms['p']:+.1f}  I:{pid_terms['i']:+.1f}  D:{pid_terms['d']:+.1f}",
@@ -699,7 +626,7 @@ def draw_hud(frame, detections, state, command, info, pid_terms,
         cv2.putText(frame, "R = start recording", (10, 185),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (150, 150, 150), 1)
 
-    # Robot marker + heading arrow + threshold rings
+    # Robot marker, heading arrow, threshold rings
     if ROBOT_ID in detections:
         rc = detections[ROBOT_ID]['center']
         cv2.circle(frame, rc, 10, (0, 255, 0), -1)
@@ -720,7 +647,7 @@ def draw_hud(frame, detections, state, command, info, pid_terms,
         cv2.putText(frame, "OPPT", (oc[0] + 12, oc[1]),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-    # Vector line robot -> opponent
+    # Vector line robot to opponent
     if ROBOT_ID in detections and OPPONENT_ID in detections:
         rc       = detections[ROBOT_ID]['center']
         oc       = detections[OPPONENT_ID]['center']
@@ -734,17 +661,13 @@ def draw_hud(frame, detections, state, command, info, pid_terms,
 
     return frame
 
-
 # =============================================================================
 #  Main
 # =============================================================================
-
 def main():
     detector = make_detector()
-
     worker = CommandWorker()
     worker.start()
-
     logger = PerformanceLogger()
 
     # One PID instance -- persists across frames, reset on stop/dropout
