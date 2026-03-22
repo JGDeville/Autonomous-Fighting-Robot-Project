@@ -1,6 +1,6 @@
 """
-robot_vision_phase1.py
-----------------------
+PHASE_1.py
+
 Phase 1: Autonomous State Machine + Performance Metrics.
 
 State machine behaviour:
@@ -8,11 +8,6 @@ State machine behaviour:
   ALIGNING   - steering error > ALIGN_THRESHOLD → hard LEFT or RIGHT spin
   ATTACKING  - aligned, distance > RAM_THRESHOLD → FORWARD
   RAMMING    - distance <= RAM_THRESHOLD → FORWARD (contact)
-
-Detection:
-  Uses the same tuned DetectorParameters and 0.5x downscaled detection
-  as Phase 2 and Phase 3 so detection quality is not a confound when
-  comparing phases. Only the control algorithm differs between scripts.
 
 Metrics logged per run:
   - Time to align            (s)   time until |steering_error| < threshold
@@ -23,10 +18,7 @@ Metrics logged per run:
   - Path efficiency          (%)   straight-line displacement / actual path * 100
   - Detection reliability    (%)   frames with both markers / total frames
 
-CSV files saved to ./logs/ next to this script.
-
 Usage:
-    python robot_vision_phase1.py
     Q = quit | S = stop | T = test | A = autonomous | R = record
 """
 
@@ -40,15 +32,15 @@ import csv
 import os
 from datetime import datetime
 
-# ── Log directory — always next to this script ────────────────────────────────
+# Log directory
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
-# ── ESP32 ─────────────────────────────────────────────────────────────────────
+# ESP32
 ESP32_IP   = "192.168.4.1"
 ESP32_PORT = 8888
 TIMEOUT    = 5
 
-# ── ArUco ─────────────────────────────────────────────────────────────────────
+# ArUco
 ARUCO_TYPE = "DICT_4X4_1000"
 ARUCO_DICT_MAP = {
     "DICT_4X4_50":         cv2.aruco.DICT_4X4_50,
@@ -82,23 +74,21 @@ MARKER_LENGTH = 0.055
 ROBOT_ID    = 0
 OPPONENT_ID = 1
 
-# ── Thresholds ────────────────────────────────────────────────────────────────
+# Thresholds
 ALIGN_THRESHOLD_DEG = 20.0
 ATTACK_THRESHOLD_PX = 300   # used for HUD ring only in Phase 1
 RAM_THRESHOLD_PX    = 180
 CMD_INTERVAL        = 0.15
 
-# ── Detection scaling ─────────────────────────────────────────────────────────
+# Detection scaling
 # Detector runs on a half-resolution copy of the frame for speed and to reduce
 # motion blur. Corners are scaled back up to full resolution before pose
 # estimation so accuracy is unaffected. Identical to Phase 2 and Phase 3.
 DETECT_SCALE = 0.5
 
-
 # =============================================================================
 #  States
 # =============================================================================
-
 class State:
     SEARCHING = "SEARCHING"
     ALIGNING  = "ALIGNING"
@@ -112,24 +102,10 @@ STATE_COLOURS = {
     State.RAMMING:   (0, 0, 255),       # red
 }
 
-
 # =============================================================================
 #  Performance Logger
 # =============================================================================
-
 class PerformanceLogger:
-    """
-    Records per-frame data and computes metrics at end of run.
-
-    Metrics (command oscillations intentionally excluded for Phase 1):
-      - time_to_align_s             first frame where |error| < ALIGN_THRESHOLD
-      - time_to_contact_s           first frame where distance <= RAM_THRESHOLD
-      - heading_at_contact_deg      steering error at moment of contact
-      - mean_abs_steering_error_deg average |error| across all frames
-      - max_abs_steering_error_deg  worst |error| seen during run
-      - path_efficiency_pct         straight-line displacement / actual path * 100
-      - detection_reliability_pct   % frames where both markers were visible
-    """
 
     def __init__(self, log_dir=LOG_DIR):
         self.log_dir = log_dir
@@ -154,18 +130,7 @@ class PerformanceLogger:
 
     def record_frame(self, steering_error, distance, command,
                      both_detected, robot_center=None):
-        """
-        Call every camera frame while running is True.
 
-        Parameters
-        ----------
-        steering_error : float or None   signed degrees
-        distance       : float or None   pixels to opponent
-        command        : str             command sent this frame
-        both_detected  : bool            were both markers visible?
-        robot_center   : (int,int) or None  pixel centre of robot marker
-                         — used for true 2D path efficiency calculation
-        """
         if not self.running:
             return
 
@@ -202,8 +167,7 @@ class PerformanceLogger:
                   f"dist={distance:.0f}px  error={steering_error:+.1f}°")
 
     def end_run(self, label="run"):
-        """Finalise metrics, print summary, save CSVs. Returns metrics dict."""
-        if not self.running or not self.frames:
+        # Finalise metrics, print summary, save CSVs. Returns metrics dict 
             print("[LOG] No data to save.")
             return {}
 
@@ -211,21 +175,20 @@ class PerformanceLogger:
         total_time   = self.frames[-1]['time']
         n_frames     = len(self.frames)
 
-        # ── Detection reliability ─────────────────────────────────────────
+        # Detection reliability
         detected      = sum(1 for f in self.frames if f['both_detected'])
         detection_pct = 100.0 * detected / n_frames
 
-        # ── Steering error stats ──────────────────────────────────────────
+        # Steering error stats
         errors   = [abs(f['steering_error']) for f in self.frames
                     if f['steering_error'] is not None]
         mean_err = round(float(np.mean(errors)), 1) if errors else None
         max_err  = round(float(np.max(errors)),  1) if errors else None
 
-        # ── Path efficiency (true 2D) ─────────────────────────────────────
+        # Path efficiency (true 2D)
         # Uses actual robot pixel positions logged each frame.
         # Efficiency = straight-line distance (start→end) / sum of
         # frame-to-frame step distances * 100
-        # A perfectly straight path scores 100%. Wandering scores lower.
         coords = [(f['robot_x'], f['robot_y']) for f in self.frames
                   if f['robot_x'] is not None and f['robot_y'] is not None]
 
@@ -245,7 +208,7 @@ class PerformanceLogger:
             if actual_path > 0:
                 path_efficiency_pct = round(100.0 * straight_line / actual_path, 1)
 
-        # ── Build metrics dict ────────────────────────────────────────────
+        # Build metrics dict
         metrics = {
             'label':                       label,
             'total_time_s':                round(total_time, 3),
@@ -262,7 +225,7 @@ class PerformanceLogger:
             'total_frames':                n_frames,
         }
 
-        # ── Print summary ─────────────────────────────────────────────────
+        # Print summary
         print("\n[LOG] ── Run Summary ────────────────────────────────")
         print(f"       Label                   : {metrics['label']}")
         print(f"       Total time              : {metrics['total_time_s']} s")
@@ -276,7 +239,7 @@ class PerformanceLogger:
         print(f"       Frames recorded         : {metrics['total_frames']}")
         print("[LOG] ───────────────────────────────────────────────")
 
-        # ── Save CSVs ─────────────────────────────────────────────────────
+        # Save CSVs
         ts           = datetime.now().strftime("%Y%m%d_%H%M%S")
         summary_path = os.path.join(self.log_dir, f"summary_{ts}_{label}.csv")
         frames_path  = os.path.join(self.log_dir, f"frames_{ts}_{label}.csv")
@@ -305,7 +268,6 @@ class PerformanceLogger:
 # =============================================================================
 #  Command Worker
 # =============================================================================
-
 class CommandWorker(threading.Thread):
 
     def __init__(self):
@@ -369,23 +331,10 @@ class CommandWorker(threading.Thread):
 
 
 # =============================================================================
-#  ArUco — tuned detector + downscaled detection (identical to Phase 2 & 3)
+#  ArUco
 # =============================================================================
-
 def make_detector():
-    """
-    Build an ArucoDetector with parameters tuned for reliable detection.
-    Used by all three phases so detection quality is not a confound.
-
-    Key parameter choices:
-      adaptiveThreshWinSizeMin/Max  — wider range catches markers under
-                                      uneven or changing lighting
-      minMarkerPerimeterRate        — accepts smaller/more distant markers
-      polygonalApproxAccuracyRate   — tolerates perspective warp from
-                                      fast movement
-      CORNER_REFINE_SUBPIX          — sub-pixel corner refinement reduces
-                                      pose jitter on detected markers
-    """
+  
     d = cv2.aruco.getPredefinedDictionary(ARUCO_DICT_MAP[ARUCO_TYPE])
     p = cv2.aruco.DetectorParameters()
     p.adaptiveThreshWinSizeMin    = 3
@@ -400,16 +349,7 @@ def make_detector():
 
 
 def pose_estimation(frame, detector):
-    """
-    Detect markers on a downscaled copy of the frame for speed, then scale
-    corners back up to full resolution for drawing and pose estimation.
-
-    Downscaling to DETECT_SCALE (0.5) means the detector processes a
-    640x360 image rather than 1280x720 — roughly 4x faster, and motion
-    blur has less impact on a smaller image. Pose accuracy is unaffected
-    because corners are divided by DETECT_SCALE before being passed to
-    estimatePoseSingleMarkers.
-    """
+  
     h, w = frame.shape[:2]
 
     # Detect on small frame
@@ -441,14 +381,11 @@ def pose_estimation(frame, detector):
             'tvec':   tvec[0][0].tolist(),
             'rvec':   rvec[0][0].tolist(),
         }
-
     return frame, detections
-
 
 # =============================================================================
 #  Geometry
 # =============================================================================
-
 def get_robot_heading(rvec):
     R, _ = cv2.Rodrigues(np.array(rvec, dtype=np.float64))
     return np.arctan2(R[1][0], R[0][0])
@@ -468,9 +405,8 @@ def get_pixel_distance(robot_center, opponent_center):
 
 
 # =============================================================================
-#  State Machine — Phase 1: hard LEFT/RIGHT spin for alignment
+#  State Machine — Phase 1
 # =============================================================================
-
 def decide_state_and_command(detections):
     """
     Phase 1 state machine.
@@ -480,10 +416,6 @@ def decide_state_and_command(detections):
       2. Steering error > threshold     → ALIGNING,  LEFT or RIGHT (full spin)
       3. Distance <= RAM threshold      → RAMMING,   FORWARD
       4. Aligned and outside RAM zone   → ATTACKING, FORWARD
-
-    Note: there is no proportional steering here. The robot stops
-    all forward movement and spins in place until aligned, then drives
-    straight forward. This is the baseline Phase 1 behaviour.
     """
     info = {'steering_error': None, 'distance': None}
 
@@ -513,11 +445,9 @@ def decide_state_and_command(detections):
     # Priority 3: aligned and far enough away — drive forward
     return State.ATTACKING, "FORWARD", info
 
-
 # =============================================================================
 #  HUD
 # =============================================================================
-
 def draw_hud(frame, detections, state, command, info, worker, autonomous, logger):
     h, w = frame.shape[:2]
 
@@ -531,7 +461,7 @@ def draw_hud(frame, detections, state, command, info, worker, autonomous, logger
     cv2.putText(frame, "AUTO: ON  [A]" if autonomous else "AUTO: OFF [A]",
                 (10, h - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, auto_col, 2)
 
-    # Phase label — always visible so recordings are unambiguous
+    # Phase label
     cv2.putText(frame, "PHASE 1 — State Machine",
                 (w // 2 - 160, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
 
@@ -565,7 +495,7 @@ def draw_hud(frame, detections, state, command, info, worker, autonomous, logger
         cv2.putText(frame, "R = start recording", (10, 155),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (150, 150, 150), 1)
 
-    # Robot marker + heading arrow + threshold rings
+    # Robot marker, heading arrow, threshold rings
     if ROBOT_ID in detections:
         rc = detections[ROBOT_ID]['center']
         cv2.circle(frame, rc, 10, (0, 255, 0), -1)
@@ -586,7 +516,7 @@ def draw_hud(frame, detections, state, command, info, worker, autonomous, logger
         cv2.putText(frame, "OPPT", (oc[0] + 12, oc[1]),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-    # Vector line robot → opponent
+    # Vector line robot to opponent
     if ROBOT_ID in detections and OPPONENT_ID in detections:
         rc       = detections[ROBOT_ID]['center']
         oc       = detections[OPPONENT_ID]['center']
@@ -600,11 +530,9 @@ def draw_hud(frame, detections, state, command, info, worker, autonomous, logger
 
     return frame
 
-
 # =============================================================================
 #  Main
 # =============================================================================
-
 def main():
     detector = make_detector()   # tuned parameters, identical to Phase 2 & 3
 
@@ -624,7 +552,7 @@ def main():
         return
 
     print("[CAM] Camera opened.")
-    print("PHASE 1 — Autonomous State Machine (hard LEFT/RIGHT spin)")
+    print("PHASE 1 — Autonomous State Machine ( LEFT/RIGHT spin)")
     print("A = autonomous  |  R = record  |  S = stop  |  T = test  |  Q = quit")
     print("=" * 60)
 
